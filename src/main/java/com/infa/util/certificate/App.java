@@ -1,7 +1,12 @@
 package com.infa.util.certificate;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileWriter;
 import java.io.PrintStream;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
 // import nl.altindag.ssl.*;
 
@@ -34,18 +39,59 @@ public final class App {
         // System.setOut(new PrintStream(baos));
 
         String subject = "";
+        boolean in_cert = false;
+        List<String> cert_vals = new ArrayList<String>();
+        List<String> subjects = new ArrayList<String>();
         String[] lines = baos.toString().split(System.getProperty("line.separator"));
         for (String tmpLine : lines) {
             if (tmpLine.startsWith("subject=CN=")) {
-                System.out.println("Subject line=" + tmpLine);
+                System.out.println("Certificate found: " + tmpLine);
                 int end = tmpLine.length();
                 if (tmpLine.indexOf(",") > 0) {
                     end = tmpLine.indexOf(",");
                 }
                 subject = tmpLine.substring("subject=CN=".length(), end);
+                subjects.add(subject);
                 System.out.println("\t" + subject);
+            } else if (tmpLine.equals("-----BEGIN CERTIFICATE-----")) {
+                in_cert = true;
+                cert_vals.clear();
+                cert_vals.add(tmpLine);
+            } else if (tmpLine.equals("-----END CERTIFICATE-----")) {
+                in_cert = false;
+                cert_vals.add(tmpLine);
+                // write the cert
+                String folder = "./certs";
+                String cert_file = folder + "/" + subject + ".pem";
+                System.out.println("\tready to write cert: " + cert_file + " with " + cert_vals.size() + " lines");
+
+                File directory = new File(folder);
+                if (!directory.exists()) {
+                    System.out.println("\tfolder: " + folder + " does not exist, creating it");
+                    directory.mkdir();
+                }
+
+                try {
+                    FileWriter writer = new FileWriter(cert_file);
+                    for (String str : cert_vals) {
+                        writer.write(str + System.lineSeparator());
+                    }
+                    writer.close();
+                } catch (Exception ex) {
+                    ex.printStackTrace();
+                }
+
+            } else {
+                if (in_cert) {
+                    cert_vals.add(tmpLine);
+                }
             }
         }
 
+        System.out.println("cert list - read order");
+        System.out.println(subjects);
+        Collections.reverse(subjects);
+        // System.out.println(subjects);
+        System.out.println("importing certificates in reversed order: " + subjects);
     }
 }

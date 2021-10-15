@@ -5,6 +5,7 @@ target/*
 .vscode/*
 .project
 .classpath
+certs/*
 
 # Log file
 *.log
