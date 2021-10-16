@@ -2,8 +2,17 @@ package com.infa.util.certificate;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.FileWriter;
+import java.io.IOException;
 import java.io.PrintStream;
+import java.security.KeyStore;
+import java.security.KeyStoreException;
+import java.security.NoSuchAlgorithmException;
+import java.security.cert.CertificateException;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -93,5 +102,50 @@ public final class App {
         Collections.reverse(subjects);
         // System.out.println(subjects);
         System.out.println("importing certificates in reversed order: " + subjects);
+
+        try {
+            KeyStore ks = KeyStore.getInstance("JKS");
+            System.out.println("keystore initialized...");
+            char[] pwdArray = "pass2038@infaSSL".toCharArray();
+            String keystore = "./certs/clientkeystore";
+
+            // load the cert
+            ks = KeyStore.getInstance("JKS");
+            try {
+                ks.load(new FileInputStream(keystore), pwdArray);
+                boolean is_updated = false;
+
+                for (String cert_alias : subjects) {
+                    if (ks.containsAlias(cert_alias)) {
+                        System.out.println("\t\talias: " + cert_alias + " already in keystore");
+                        continue;
+                    }
+                    is_updated = true;
+                    System.out.println("\t\tadding new alias to keystore");
+                    CertificateFactory fact = CertificateFactory.getInstance("X.509");
+                    FileInputStream is = new FileInputStream("./certs/" + cert_alias + ".pem");
+                    X509Certificate cer = (X509Certificate) fact.generateCertificate(is);
+                    is.close();
+
+                    ks.setCertificateEntry(cert_alias, cer);
+                }
+                if (is_updated) {
+                    System.out.println("updating keystore...");
+                    FileOutputStream out = new FileOutputStream(keystore);
+                    ks.store(out, pwdArray);
+                    out.close();
+                } else {
+                    System.out.println("no new aliases to add, keystore was not be updated");
+                }
+            } catch (NoSuchAlgorithmException | CertificateException | IOException e) {
+                // TODO Auto-generated catch block
+                e.printStackTrace();
+            }
+
+        } catch (KeyStoreException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        }
+
     }
 }
