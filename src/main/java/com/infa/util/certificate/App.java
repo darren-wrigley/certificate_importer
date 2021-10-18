@@ -15,15 +15,46 @@ import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
-
-// import nl.altindag.ssl.*;
+import java.util.Map;
 
 /**
- * Hello world!
+ * certificate util. extract all certs from a website & store to file + import
+ * into truststore
  */
 public final class App {
-    private App() {
+    private static String folder = "./certs";
+    private String truststoreFile = "";
+    private String truststorePass = "";
+    // initialize args for cert ripper module, starting with "print -f pem"
+    private List<String> ripperArgs = new ArrayList<String>() {
+        {
+            add("print");
+            add("-f");
+            add("pem");
+        }
+    };
+
+    private App(String[] args) {
+        // boolean hasPass = false;
+        for (String arg : args) {
+            if (arg.startsWith("--url")) {
+                ripperArgs.add(arg);
+            } else if (arg.startsWith("--keystore=")) {
+                this.truststoreFile = arg.substring("--keystore=".length());
+            } else if (arg.startsWith("--storepass=")) {
+                this.truststorePass = arg.substring("--storepass=".length());
+                // hasPass = true;
+                // this.truststorePass = arg.substring("--storepass=".length());
+            } else {
+                System.out.println("unknown parameter: " + arg);
+            }
+        }
+
+        // if (!hasPass) {
+        // System.out.println("no password passed for truststore: prompt for input");
+        // }
     }
 
     /**
@@ -32,120 +63,149 @@ public final class App {
      * @param args The arguments of the program.
      */
     public static void main(String[] args) {
-        System.out.println("Hello World!");
-        String[] parms = { "print", "--url=https://www.google.com", "-f", "pem" };
+        System.out.println("web app certificate export & trustore import");
+        if (args.length < 2) {
+            System.out.println("missing required arguments:");
+            System.out.print("\t--url=https://<server_with_optional_port> ");
+            System.out.print("--keystore <truststore_file_to_import certs> ");
+            System.out.println("--storepass=<truststore password>");
+            System.out.println("\tNotes:\tyou can pass multiple --url arguments");
+            System.out.println("\t\tif you do use --storepass, you will be prompted for a password");
+            System.exit(1);
+        }
+
+        // create the folder that holds the cert files, if not already exists
+        File directory = new File(folder);
+        if (!directory.exists()) {
+            System.out.println("\tfolder: " + folder + " does not exist, creating it");
+            directory.mkdir();
+        }
+
+        App certImporter = new App(args);
+        certImporter.run();
+
+    }
+
+    private void run() {
+        System.out.println("running cert export & import for truststore");
+        ByteArrayOutputStream baos = get_certificates();
+        List<String> certAliases = this.save_certificates(baos);
+        this.update_truststore(certAliases);
+    }
+
+    private ByteArrayOutputStream get_certificates() {
+        // use cert ripper to extract certificate chains from each url
+        System.out.println("extracting certicates...");
+        // String[] parms = { "print", "--url=https://www.google.com", "-f", "pem" };
+        String[] parms = this.ripperArgs.toArray(new String[ripperArgs.size()]);
 
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         PrintStream ps = new PrintStream(baos);
         PrintStream old = System.out;
         System.setOut(ps);
-        System.out.println("Foofoofoo!");
         nl.altindag.ssl.App.main(parms);
         System.out.flush();
         System.setOut(old);
 
-        // System.out.println(baos.toString());
-        // System.setOut(new PrintStream(baos));
+        return baos;
+    }
 
-        String subject = "";
-        boolean in_cert = false;
-        List<String> cert_vals = new ArrayList<String>();
+    private List<String> save_certificates(ByteArrayOutputStream baos) {
+        Map<String, String> aliasMap = extractCertificates(baos);
         List<String> subjects = new ArrayList<String>();
-        String[] lines = baos.toString().split(System.getProperty("line.separator"));
-        for (String tmpLine : lines) {
-            if (tmpLine.startsWith("subject=CN=")) {
-                System.out.println("Certificate found: " + tmpLine);
-                int end = tmpLine.length();
-                if (tmpLine.indexOf(",") > 0) {
-                    end = tmpLine.indexOf(",");
-                }
-                subject = tmpLine.substring("subject=CN=".length(), end);
-                subjects.add(subject);
-                System.out.println("\t" + subject);
-            } else if (tmpLine.equals("-----BEGIN CERTIFICATE-----")) {
-                in_cert = true;
-                cert_vals.clear();
-                cert_vals.add(tmpLine);
-            } else if (tmpLine.equals("-----END CERTIFICATE-----")) {
-                in_cert = false;
-                cert_vals.add(tmpLine);
-                // write the cert
-                String folder = "./certs";
-                String cert_file = folder + "/" + subject + ".pem";
-                System.out.println("\tready to write cert: " + cert_file + " with " + cert_vals.size() + " lines");
+        // save the certificate entries to .pem files
+        for (Map.Entry<String, String> entry : aliasMap.entrySet()) {
+            String certFile = folder + "/" + entry.getKey() + ".pem";
+            int certLines = entry.getValue().split("\n").length;
+            subjects.add(entry.getKey());
+            System.out.println("\twriting certificate: " + certFile + " with " + certLines + " lines");
 
-                File directory = new File(folder);
-                if (!directory.exists()) {
-                    System.out.println("\tfolder: " + folder + " does not exist, creating it");
-                    directory.mkdir();
-                }
-
-                try {
-                    FileWriter writer = new FileWriter(cert_file);
-                    for (String str : cert_vals) {
-                        writer.write(str + System.lineSeparator());
-                    }
-                    writer.close();
-                } catch (Exception ex) {
-                    ex.printStackTrace();
-                }
-
-            } else {
-                if (in_cert) {
-                    cert_vals.add(tmpLine);
-                }
+            try {
+                FileWriter writer = new FileWriter(certFile);
+                writer.write(entry.getValue());
+                writer.close();
+            } catch (IOException ex) {
+                ex.printStackTrace();
             }
         }
 
-        System.out.println("cert list - read order");
-        System.out.println(subjects);
+        System.out.println(subjects.size() + " certificates extracted");
         Collections.reverse(subjects);
-        // System.out.println(subjects);
-        System.out.println("importing certificates in reversed order: " + subjects);
+        return subjects;
+    }
 
+    private Map<String, String> extractCertificates(ByteArrayOutputStream baos) {
+        Map<String, String> certMap = new LinkedHashMap<String, String>();
+        String[] lines = baos.toString().split(System.getProperty("line.separator"));
+        String subject = "";
+        boolean inCert = false;
+        List<String> certVals = new ArrayList<String>();
+        for (String tmpLine : lines) {
+            if (tmpLine.startsWith("Certificates for url = ")) {
+                System.out.println("website... " + tmpLine);
+            } else if (tmpLine.startsWith("subject=CN=")) {
+                subject = extractSubject(tmpLine);
+            } else if ("-----BEGIN CERTIFICATE-----".equals(tmpLine)) {
+                inCert = true;
+                certVals.clear();
+                certVals.add(tmpLine);
+            } else if ("-----END CERTIFICATE-----".equals(tmpLine)) {
+                inCert = false;
+                certVals.add(tmpLine);
+                certMap.put(subject, String.join("\n", certVals));
+            } else if (inCert) {
+                certVals.add(tmpLine);
+            }
+        }
+        return certMap;
+    }
+
+    private String extractSubject(String subjectLine) {
+        int end = subjectLine.length();
+        if (subjectLine.indexOf(",") > 0) {
+            end = subjectLine.indexOf(",");
+        }
+        return subjectLine.substring("subject=CN=".length(), end);
+    }
+
+    private int update_truststore(List<String> subjects) {
+        // System.out.println("importing certificates in reversed order: " + subjects);
+        int updateCount = 0;
         try {
             KeyStore ks = KeyStore.getInstance("JKS");
-            System.out.println("keystore initialized...");
-            char[] pwdArray = "pass2038@infaSSL".toCharArray();
-            String keystore = "./certs/clientkeystore";
-
             // load the cert
             ks = KeyStore.getInstance("JKS");
-            try {
-                ks.load(new FileInputStream(keystore), pwdArray);
-                boolean is_updated = false;
+            System.out.println("loading keystore: " + truststoreFile);
+            ks.load(new FileInputStream(truststoreFile), truststorePass.toCharArray());
 
-                for (String cert_alias : subjects) {
-                    if (ks.containsAlias(cert_alias)) {
-                        System.out.println("\t\talias: " + cert_alias + " already in keystore");
-                        continue;
-                    }
-                    is_updated = true;
-                    System.out.println("\t\tadding new alias to keystore");
-                    CertificateFactory fact = CertificateFactory.getInstance("X.509");
-                    FileInputStream is = new FileInputStream("./certs/" + cert_alias + ".pem");
-                    X509Certificate cer = (X509Certificate) fact.generateCertificate(is);
-                    is.close();
-
-                    ks.setCertificateEntry(cert_alias, cer);
+            for (String certAlias : subjects) {
+                if (ks.containsAlias(certAlias)) {
+                    System.out.println("\talias: " + certAlias + " already in keystore");
+                    continue;
                 }
-                if (is_updated) {
-                    System.out.println("updating keystore...");
-                    FileOutputStream out = new FileOutputStream(keystore);
-                    ks.store(out, pwdArray);
-                    out.close();
-                } else {
-                    System.out.println("no new aliases to add, keystore was not be updated");
-                }
-            } catch (NoSuchAlgorithmException | CertificateException | IOException e) {
-                // TODO Auto-generated catch block
-                e.printStackTrace();
+                updateCount++;
+                System.out.println("\tadding new alias '" + certAlias + "' to keystore");
+                CertificateFactory fact = CertificateFactory.getInstance("X.509");
+                FileInputStream is = new FileInputStream("./certs/" + certAlias + ".pem");
+                X509Certificate cer = (X509Certificate) fact.generateCertificate(is);
+                is.close();
+                ks.setCertificateEntry(certAlias, cer);
             }
-
-        } catch (KeyStoreException e) {
+            if (updateCount > 0) {
+                System.out.println("updating keystore, with " + updateCount + " new entries");
+                FileOutputStream out = new FileOutputStream(truststoreFile);
+                ks.store(out, truststorePass.toCharArray());
+                out.close();
+            } else {
+                System.out.println("no new aliases to add, keystore was not updated");
+            }
+        } catch (NoSuchAlgorithmException | CertificateException | IOException e) {
             // TODO Auto-generated catch block
+            e.printStackTrace();
+        } catch (KeyStoreException e) {
             e.printStackTrace();
         }
 
+        return updateCount;
     }
 }
