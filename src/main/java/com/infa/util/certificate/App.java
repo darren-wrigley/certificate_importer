@@ -1,6 +1,7 @@
 package com.infa.util.certificate;
 
 import java.io.ByteArrayOutputStream;
+import java.io.Console;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -18,6 +19,10 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import javax.swing.JOptionPane;
+import javax.swing.JPasswordField;
 
 /**
  * certificate util. extract all certs from a website & store to file + import
@@ -37,7 +42,7 @@ public final class App {
     };
 
     private App(String[] args) {
-        // boolean hasPass = false;
+        boolean hasPass = false;
         for (String arg : args) {
             if (arg.startsWith("--url")) {
                 ripperArgs.add(arg);
@@ -45,16 +50,48 @@ public final class App {
                 this.truststoreFile = arg.substring("--keystore=".length());
             } else if (arg.startsWith("--storepass=")) {
                 this.truststorePass = arg.substring("--storepass=".length());
-                // hasPass = true;
-                // this.truststorePass = arg.substring("--storepass=".length());
+                hasPass = true;
             } else {
                 System.out.println("unknown parameter: " + arg);
             }
         }
 
-        // if (!hasPass) {
-        // System.out.println("no password passed for truststore: prompt for input");
-        // }
+        // check for system variables in truststoreFile
+        this.truststoreFile = replaceEnvVars(truststoreFile);
+
+        if (!hasPass) {
+            System.out.println("no password passed for truststore: prompt for input");
+            this.truststorePass = getPassword("Password for keystore: ");
+        }
+    }
+
+    private String replaceEnvVars(String variableToReplace) {
+        // System.out.println("checking for env vars in " + variableToReplace);
+        String replacedVal = variableToReplace;
+        Map<String, String> envMap = System.getenv();
+        String pattern = "\\$([A-Za-z0-9_]+)";
+        Pattern expr = Pattern.compile(pattern);
+        Matcher matcher = expr.matcher(replacedVal);
+        while (matcher.find()) {
+            String envVarName = matcher.group(1).toUpperCase();
+            System.out.println("\tfound env var: " + envVarName + " in filename: " + replacedVal);
+            String envValue = envMap.get(matcher.group(1).toUpperCase());
+            if (envValue == null) {
+                envValue = "";
+                System.out.println("\tERROR: cannot find value for env var " + envVarName);
+            } else {
+                envValue = envValue.replace("\\", "\\\\");
+                System.out.println("\tsubstituting " + envVarName + " with: " + envValue);
+            }
+            Pattern subexpr = Pattern.compile(Pattern.quote(matcher.group(0)));
+            replacedVal = subexpr.matcher(replacedVal).replaceAll(envValue);
+        }
+        if (!replacedVal.equals(variableToReplace)) {
+            System.out.println("\tnew value is: " + replacedVal);
+        }
+        // System.out.println("returning " + replacedVal);
+        return replacedVal;
+
     }
 
     /**
@@ -199,13 +236,38 @@ public final class App {
             } else {
                 System.out.println("no new aliases to add, keystore was not updated");
             }
-        } catch (NoSuchAlgorithmException | CertificateException | IOException e) {
-            // TODO Auto-generated catch block
+        } catch (NoSuchAlgorithmException | CertificateException e) {
             e.printStackTrace();
+        } catch (IOException e) {
+            System.out.println("\tError with keystore:  " + e.getMessage());
         } catch (KeyStoreException e) {
             e.printStackTrace();
         }
 
         return updateCount;
+    }
+
+    /**
+     * prompt the user for a password, using the console (default) for development
+     * environments like eclipse, their is no standard console. so in that case we
+     * open a swing ui panel with an input field to accept a password
+     *
+     * @return the password entered
+     *
+     * @author dwrigley
+     */
+    public static String getPassword(String prompt) {
+        String password;
+        Console c = System.console();
+        if (c == null) { // IN ECLIPSE IDE (prompt for password using swing ui
+            final JPasswordField pf = new JPasswordField();
+            password = JOptionPane.showConfirmDialog(null, pf, prompt, JOptionPane.OK_CANCEL_OPTION,
+                    JOptionPane.QUESTION_MESSAGE) == JOptionPane.OK_OPTION ? new String(pf.getPassword())
+                            : "enter your pwd here....";
+            System.out.println("pwd=" + password);
+        } else { // Outside Eclipse IDE (e.g. windows/linux console)
+            password = new String(c.readPassword(prompt));
+        }
+        return password;
     }
 }
